@@ -1,0 +1,21 @@
+TODO:
+    optimizerをAdamWにするにはハードコードするしかない, train.py
+    odeedでの画像のIO実装
+
+
+Question
+    ・durationと論文中の40000 stepsとの関係ははっきりわからない
+    　NOTEの解釈ならduration = 3.2
+    ・archは不明(ddpmpp/ncsnpp/adm)
+    ・これは流石に、germanyとlouisianaとで別々のモデルを訓練しているのか？
+
+NOTE:
+    オプション周り
+        cbaseが最初のチャネル
+        cresがcbaseに対する倍率
+        emaはデフォルト
+        durationは 1e6(Million) * duration(3.2 (Million IMGs)) = steps(仮にitersを意味するなら, 40000) * batches(80)
+    
+    ODEED周り
+        EDMの論文ではAlgorithm 1においてPF-ODEをHeun法と独自のschejuleとscalingで解いている
+        githubの実装ではAlgorithm 2が採用されており、こちらはPF-ODEによるDeterministic Samplingではなく、Stocastic Samplingを行う

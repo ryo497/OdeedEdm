@@ -65,6 +65,7 @@ def parse_int_list(s):
 @click.option('--bench',         help='Enable cuDNN benchmarking', metavar='BOOL',                  type=bool, default=True, show_default=True)
 @click.option('--cache',         help='Cache dataset in CPU memory', metavar='BOOL',                type=bool, default=True, show_default=True)
 @click.option('--workers',       help='DataLoader worker processes', metavar='INT',                 type=click.IntRange(min=1), default=1, show_default=True)
+@click.option('--device',       help='Device to use for training', metavar='cuda|cpu',             type=str, default='cuda', show_default=True)
 
 # I/O-related.
 @click.option('--desc',          help='String to include in result dir name', metavar='STR',        type=str)
@@ -88,9 +89,15 @@ def main(**kwargs):
     torchrun --standalone --nproc_per_node=8 train.py --outdir=training-runs \\
         --data=datasets/cifar10-32x32.zip --cond=1 --arch=ddpmpp
     """
+    if torch.cuda.is_available():
+        torch.multiprocessing.set_start_method('spawn')
+        dist.init()
+        device = 'cuda'
+    else:
+        device = 'cpu'
     opts = dnnlib.EasyDict(kwargs)
-    torch.multiprocessing.set_start_method('spawn')
-    dist.init()
+    # torch.multiprocessing.set_start_method('spawn')
+    # dist.init()
 
     # Initialize config dict.
     c = dnnlib.EasyDict()
@@ -99,6 +106,7 @@ def main(**kwargs):
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.999], eps=1e-8)
+    # c.device = device
 
     # Validate dataset options.
     try:
@@ -157,8 +165,8 @@ def main(**kwargs):
     if opts.seed is not None:
         c.seed = opts.seed
     else:
-        seed = torch.randint(1 << 31, size=[], device=torch.device('cuda'))
-        torch.distributed.broadcast(seed, src=0)
+        seed = torch.randint(1 << 31, size=[], device=torch.device(device))
+        # torch.distributed.broadcast(seed, src=0)
         c.seed = int(seed)
 
     # Transfer learning and resume.

@@ -1,0 +1,8 @@
+/data/
+/datasets/
+.bash_history
+/.cache/
+/.devcontainer/
+/.local/
+/result/
+*.png
