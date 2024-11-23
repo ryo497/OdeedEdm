@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 import json
 from argparse import ArgumentParser
+import random
 
 """
 We downsample the original images by a
@@ -43,9 +44,14 @@ def extract_patches(image, patch_size=(256, 256), overlap_w=0.5, overlap_h=0.5):
 def process_images(data_path, nation, num_patches_w=3, num_patches_h=3):
     """Process images and save patches."""
     labels = {"labels": []}
-    output_dir = f"{data_path}-{nation}-patches"
-    os.makedirs(output_dir, exist_ok=True)
-    for img_name in tqdm(os.listdir(data_path)):
+    output_dir_train = f"{data_path}-{nation}-patches_train"
+    output_dir_test = f"{data_path}-{nation}-patches_test"
+    os.makedirs(output_dir_train, exist_ok=True)
+    os.makedirs(output_dir_test, exist_ok=True)
+    img_names = os.listdir(data_path)
+    random.shuffle(img_names)
+    threshold = int(0.9 * len(img_names))
+    for i, img_name in tqdm(enumerate(img_names)):
         if not img_name.endswith(".tif"):
             continue
         img_path = os.path.join(data_path, img_name)
@@ -54,6 +60,10 @@ def process_images(data_path, nation, num_patches_w=3, num_patches_h=3):
         overlap_w = calculate_overlap(downsampled_image.size[0], patch_size=256, num_patches=num_patches_w)
         overlap_h = calculate_overlap(downsampled_image.size[1], patch_size=256, num_patches=num_patches_h)
         patches = extract_patches(downsampled_image, patch_size=(256, 256), overlap_w=overlap_w, overlap_h=overlap_h)  # Extract patches
+        if i < threshold:
+            output_dir = output_dir_train
+        else:
+            output_dir = output_dir_test
         for i, patch in enumerate(patches):
             patch_img = Image.fromarray(patch)
             patch_filename = f"{img_name.split('.')[0]}_{i}.png"
