@@ -6,28 +6,7 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 import json
-
-# Define constants
-nation = "Germany"
-data_path = f"data/raw_data/{nation}_Training_Public/PRE-event"
-
-# Create the data directory if it doesn't exist
-os.makedirs('data', exist_ok=True)
-
-# Create an unsigned S3 client for public access
-# s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
-
-# # Specify bucket and file details
-# bucket_name = 'spacenet-dataset'
-# file_key = f'spacenet/SN8_floods/tarballs/{nation}_Training_Public.tar.gz'
-# download_path = f'data/zip_data/{nation}_Training_Public.tar.gz'
-
-# # Download the file
-# s3.download_file(bucket_name, file_key, download_path)
-# print(f"Downloaded file to {download_path}")
-
-# Extract the downloaded tar file
-# os.system(f"tar -xvf {download_path} -C data")
+from argparse import ArgumentParser
 
 def calculate_overlap(image_size, patch_size=256, num_patches=2):
     """Calculate the appropriate overlap."""
@@ -68,7 +47,6 @@ def process_images(data_path, nation, num_patches_w=5, num_patches_h=6):
         img_path = os.path.join(data_path, img_name)
         image = Image.open(img_path)  # Load the image
         downsampled_image = downsample(image, factor=2)  # Downsample the image
-
         overlap_w = calculate_overlap(downsampled_image.size[0], patch_size=256, num_patches=num_patches_w)
         overlap_h = calculate_overlap(downsampled_image.size[1], patch_size=256, num_patches=num_patches_h)
 
@@ -79,15 +57,19 @@ def process_images(data_path, nation, num_patches_w=5, num_patches_h=6):
             patch_filename = f"{img_name.split('.')[0]}_{i}.png"
             patch_img.save(os.path.join(output_dir, patch_filename))
             labels["labels"].append([patch_filename, f"{img_name.split('.')[0]}_{i}"])
-    
     # Save metadata
     with open(os.path.join(output_dir, "dataset.json"), "w") as f:
         json.dump(labels, f)
-
-# Process the images to extract patches
-# process_images(data_path, nation)
 
 # Create the dataset and start training
 # os.system(f"python dataset_tool.py --source data/raw_data/Germany_Training_Public/PRE-event-{nation}-patches --dest datasets/PRE-event-{nation}-patches --resolution=256x256")
 
 os.system(f"python train.py --outdir=result/ --data=datasets/PRE-event-{nation}-patches --cond=0 --arch=ncsnpp --duration=500 --batch=80 --lr=2e-4 --cbase=64 --cres=1,2,2,4,4")
+
+def gen_patches(data_path, nation):
+    args = ArgumentParser()
+    args.add_argument("--data_path", type=str, default=data_path)
+    args.add_argument("--nation", type=str, default=nation)
+    # Process the images to extract patches
+    process_images(data_path, nation)
+
