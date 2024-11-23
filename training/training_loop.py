@@ -56,13 +56,12 @@ def training_loop(
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 
-    # Select batch size per GPU.
-    batch_gpu_total = batch_size // dist.get_world_size()
-    if batch_gpu is None or batch_gpu > batch_gpu_total:
-        batch_gpu = batch_gpu_total
-    num_accumulation_rounds = batch_gpu_total // batch_gpu
-    assert batch_size == batch_gpu * num_accumulation_rounds * dist.get_world_size()
-
+    # Adjust batch size
+    batch_total = batch_size
+    num_accumulation_rounds = batch_total // batch_size
+    if batch_gpu is None or batch_gpu > batch_total:
+        batch_gpu = batch_total
+    # assert batch_size == batch_gpu * num_accumulation_rounds * dist.get_world_size()
     # Load dataset.
     dist.print0('Loading dataset...')
     dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs) # subclass of training.dataset.Dataset
@@ -86,7 +85,8 @@ def training_loop(
     loss_fn = dnnlib.util.construct_class_by_name(**loss_kwargs) # training.loss.(VP|VE|EDM)Loss
     optimizer = dnnlib.util.construct_class_by_name(params=net.parameters(), **optimizer_kwargs) # subclass of torch.optim.Optimizer
     augment_pipe = dnnlib.util.construct_class_by_name(**augment_kwargs) if augment_kwargs is not None else None # training.augment.AugmentPipe
-    ddp = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device])
+    # ddp = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device])
+    ddp = net
     ema = copy.deepcopy(net).eval().requires_grad_(False)
 
     # Resume training from previous snapshot.
@@ -118,18 +118,24 @@ def training_loop(
     maintenance_time = tick_start_time - start_time
     dist.update_progress(cur_nimg // 1000, total_kimg)
     stats_jsonl = None
+    # ログファイルの初期化
+    log_file = os.path.join(run_dir, 'training_log.jsonl')  # JSON Lines形式のログ
+    if not os.path.exists(log_file):
+        with open(log_file, 'w') as f:
+            pass  # 空ファイルを作成
     while True:
-
         # Accumulate gradients.
         optimizer.zero_grad(set_to_none=True)
+        # total_loss = 0
         for round_idx in range(num_accumulation_rounds):
-            with misc.ddp_sync(ddp, (round_idx == num_accumulation_rounds - 1)):
-                images, labels = next(dataset_iterator)
-                images = images.to(device).to(torch.float32) / 127.5 - 1
-                labels = labels.to(device)
-                loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
-                training_stats.report('Loss/loss', loss)
-                loss.sum().mul(loss_scaling / batch_gpu_total).backward()
+            # with misc.ddp_sync(ddp, (round_idx == num_accumulation_rounds - 1)):
+            images, labels = next(dataset_iterator)
+            images = images.to(device).to(torch.float32) / 127.5 - 1
+            labels = labels.to(device)
+            loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
+            training_stats.report('Loss/loss', loss)
+            # 勾配の累積
+            loss.sum().mul(loss_scaling / batch_total).backward() 
 
         # Update weights.
         for g in optimizer.param_groups:
@@ -149,7 +155,22 @@ def training_loop(
 
         # Perform maintenance tasks once per tick.
         cur_nimg += batch_size
+        # print(total_kimg)
         done = (cur_nimg >= total_kimg * 1000)
+        # ログデータの作成
+        log_data = {
+            'step': cur_tick,
+            'cur_nimg': cur_nimg,
+            'loss': loss.sum().item(),
+            'lr': optimizer.param_groups[0]['lr'],
+            'timestamp': time.time()
+        }
+
+        # ログをファイルに書き込む
+        with open(log_file, 'a') as f:
+            f.write(json.dumps(log_data) + '\n')
+        # print(kimg_per_tick * 1000 + tick_start_nimg)
+        # print(cur_tick)
         if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
             continue
 
@@ -180,7 +201,7 @@ def training_loop(
             for key, value in data.items():
                 if isinstance(value, torch.nn.Module):
                     value = copy.deepcopy(value).eval().requires_grad_(False)
-                    misc.check_ddp_consistency(value)
+                    # misc.check_ddp_consistency(value)
                     data[key] = value.cpu()
                 del value # conserve memory
             if dist.get_rank() == 0:
