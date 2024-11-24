@@ -21,7 +21,7 @@ import dnnlib
 from torch_utils import misc
 from torch_utils import distributed as dist
 import lpips
-
+from argparse import ArgumentParser
 import pickle
 
 # その他設定, 実験由来
@@ -64,13 +64,11 @@ def odeed_sampler(
     x_next = x # ノイズなしの画像を初期値とする
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         x_cur = x_next
-
         # PF-ODEの決定論的な実装
         # Euler step.
         denoised = net(x_cur, t_cur, class_labels).to(torch.float64)
         d_cur = (x_cur - denoised) / t_cur
         x_next = x_cur + (t_next - t_cur) * d_cur
-
         # Apply 2nd order correction.
         if i < num_steps - 1:
             denoised = net(x_next, t_next, class_labels).to(torch.float64)
@@ -93,26 +91,24 @@ class Loss:
             loss_fn = self.lpips
             x0 = x0.to(torch.float32)
             x1 = x1.to(torch.float32)
-        
         loss = loss_fn(x0, x1)
         if method == 'mse':
             loss = loss.mean(dim=[1,2,3])
-            
         return loss.squeeze()
 
 #----------------------------------------------------------------------------
 
-@click.command()
-@click.option('--network', 'network_pkl',  help='Network pickle filename', metavar='PATH|URL',                      type=str, required=True)
-@click.option('--datadir',                  help='Where to load the input images', metavar='DIR',                   type=str, required=True)
-@click.option('--outdir',                  help='Where to save the output images', metavar='DIR',                   type=str, required=True)
+# @click.command()
+# @click.option('--network', 'network_pkl',  help='Network pickle filename', metavar='PATH|URL',                      type=str, required=True)
+# @click.option('--datadir',                  help='Where to load the input images', metavar='DIR',                   type=str, required=True)
+# @click.option('--outdir',                  help='Where to save the output images', metavar='DIR',                   type=str, required=True)
 
-@click.option('--lpips_net',                  help='Which net to use for lpips', metavar='alex|vgg|squeeze',        type=click.Choice(['alex','vgg','squeeze']), required=True)
+# @click.option('--lpips_net',                  help='Which net to use for lpips', metavar='alex|vgg|squeeze',        type=click.Choice(['alex','vgg','squeeze']), required=True)
 
-@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
-@click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
-@click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
-@click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
+# @click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
+# @click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
+# @click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
+# @click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
 
 
 def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), **sampler_kwargs):
@@ -131,7 +127,7 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
     torchrun --standalone --nproc_per_node=2 generate.py --outdir=out --seeds=0-999 --batch=64 \\
         --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
     """
-    dist.init()
+    # dist.init()
 
     loss_log = {
         'mse': [],
@@ -144,22 +140,26 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
 
     # Load network.
     dist.print0(f'Loading network from "{network_pkl}"...')
+    # import os
+    # print(os.path.exists(network_pkl))
+    # print(os.path.exists("checkpoints/network-snapshot-002400.pkl"))
     with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
-        net = pickle.load(f)['ema'].to(device)
+        # net = pickle.load(f)['ema'].to(device)
+        net = pickle.load(f)['ema'].to("cpu")
 
-    # Other ranks follow.
-    if dist.get_rank() == 0:
-        torch.distributed.barrier()
+    # # Other ranks follow.
+    # if dist.get_rank() == 0:
+    #     torch.distributed.barrier()
 
 
-    torch.distributed.barrier()
+    # torch.distributed.barrier()
     # Load dataset.
     dist.print0('Loading dataset...')
-    max_size = 0 # アドホックなので変えたい
-    for path, dirs, files in os.walk(datadir):
-        for f in files:
-            if f.endswith('png'):
-                max_size += 1
+    max_size = None # アドホックなので変えたい
+    # for path, dirs, files in os.walk(datadir):
+    #     for f in files:
+    #         if f.endswith('png'):
+    #             max_size += 1
     dataset_obj = dnnlib.util.construct_class_by_name(path=datadir, max_size=max_size, **dataset_kwargs) # subclass of training.dataset.Dataset
     dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, shuffle=False, batch_size=batch_size, **data_loader_kwargs))
 
@@ -174,19 +174,17 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
         with torch.no_grad():
             images = images.to(device).to(torch.float32) / 127.5 - 1
             labels = labels.to(device)
-
             # Generate Images
             sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
             sampler_fn = odeed_sampler
             generated_images = sampler_fn(net, images, **sampler_kwargs)
-
-
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
+            print(mse_loss)
+            hoge
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
             loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
             loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
-
             # save loss log
             os.makedirs(outdir, exist_ok=True)
             loss_log_path = os.path.join(outdir, 'loss.pkl')
@@ -194,27 +192,48 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
                 pickle.dump(loss_log, f)
 
             # save imgs and append rec loss
-            images_np = (generated_images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            for idx, image_np in enumerate(images_np):
-                img_idx = batch_idx * batch_size + idx
-                image_dir = outdir
-                os.makedirs(image_dir, exist_ok=True)
-                image_path = os.path.join(image_dir, f'{img_idx}.png')
-                if image_np.shape[2] == 1:
-                    PIL.Image.fromarray(image_np[:, :, 0], 'L').save(image_path)
-                else:
-                    PIL.Image.fromarray(image_np, 'RGB').save(image_path)
-                
+            # images_np = (generated_images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            # for idx, image_np in enumerate(images_np):
+            #     img_idx = batch_idx * batch_size + idx
+            #     image_dir = outdir
+            #     os.makedirs(image_dir, exist_ok=True)
+            #     image_path = os.path.join(image_dir, f'{img_idx}.png')
+            #     if image_np.shape[2] == 1:
+            #         PIL.Image.fromarray(image_np[:, :, 0], 'L').save(image_path)
+            #     else:
+            #         PIL.Image.fromarray(image_np, 'RGB').save(image_path)
                 # loss_log['mse'].append((img_idx, mse_loss[idx]))
                 # loss_log['lpips'].append((img_idx, lpips_loss[idx]))
 
 
     # Done.
-    torch.distributed.barrier()
-    dist.print0('Done.')   
+    # torch.distributed.barrier()
+    dist.print0('Done.')
 #----------------------------------------------------------------------------
+"""
+python odeed_with_loss.py \
+    --network_pkl checkpoints/network-snapshot-002400.pkl\
+    --datadir datasets/PRE-event-Germany-patches --outdir ODEED \
+    --lpips_net alex --num_steps 18 --sigma_min 0.002 --sigma_max 80 --rho 7
+"""
+
 
 if __name__ == "__main__":
-    main()
+    args = ArgumentParser()
+    args.add_argument("--network_pkl", type=str, required=True)
+    args.add_argument("--datadir", type=str, required=True)
+    args.add_argument("--outdir", type=str, required=True)
+    args.add_argument("--lpips_net", type=str, required=True)
+    args.add_argument("--num_steps", type=int, default=18)
+    args.add_argument("--sigma_min", type=float)
+    args.add_argument("--sigma_max", type=float)
+    args.add_argument("--rho", type=float, default=7)
+    args = args.parse_args()
+    main(
+        network_pkl=args.network_pkl,
+        datadir=args.datadir,
+        outdir=args.outdir,
+        lpips_net=args.lpips_net,
+    )
 
 #----------------------------------------------------------------------------

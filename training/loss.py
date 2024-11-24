@@ -79,4 +79,65 @@ class EDMLoss:
         loss = weight * ((D_yn - y) ** 2)
         return loss
 
+@persistence.persistent_class
+class OODReconstructionLoss:
+    def __init__(self, model, t0, weighting_function="training", num_samples=10, device="cuda"):
+        """
+        OOD再構成誤差を計算するクラス
+        :param model: 拡散モデル Dθ
+        :param t0: 時間ステップの最大値
+        :param weighting_function: 重み関数 ("training" または "linear")
+        :param num_samples: 各画像に対して計算する時間ステップの数 N
+        :param device: 計算に使用するデバイス
+        """
+        self.model = model
+        self.t0 = t0
+        self.weighting_function = weighting_function
+        self.num_samples = num_samples
+        self.device = device
+
+    def lambda_t(self, t):
+        """
+        重み関数 λ(t) を計算
+        :param t: 時間 t
+        :return: λ(t) の値
+        """
+        if self.weighting_function == "training":
+            return 1 / (t + 1e-8)  # 適切なスケールの設定
+        elif self.weighting_function == "linear":
+            return t
+        else:
+            raise ValueError(f"Unknown weighting function: {self.weighting_function}")
+
+    def __call__(self, x0, labels=None, augment_pipe=None):
+        """
+        再構成誤差を計算
+        :param x0: 入力画像テンソル (バッチサイズ, チャネル, 高さ, 幅)
+        :return: OOD損失
+        """
+        batch_size = x0.size(0)
+        # 時間 t ~ U(0, t0) をサンプリング
+        t = torch.rand(batch_size, device=self.device) * self.t0
+
+        # ノイズ epsilon ~ N(0, t0^2 * I) をサンプリング
+        epsilon = torch.randn_like(x0) * t.view(-1, 1, 1, 1)
+
+        # ノイズ付き入力 x_t
+        x_t = x0 + epsilon
+
+        # 再構成画像をモデルで計算
+        x_reconstructed = self.model(x_t, t)
+
+        # 再構成誤差 || Dθ(x0 + ϵ) - x0 ||^2
+        reconstruction_error = ((x_reconstructed - x0) ** 2).view(batch_size, -1).mean(dim=1)
+
+        # 重み λ(t) を計算
+        weights = self.lambda_t(t)
+
+        # 重み付き損失を加算
+        reconstruction_loss = weights * reconstruction_error
+
+        # 平均化
+        return reconstruction_loss
+
 #----------------------------------------------------------------------------

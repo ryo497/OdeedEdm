@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 import json
 
-NATION_LIST = ["Germany", "Louisiana-East", "Louisiana-West"]
+NATION_LIST = ["Germany"] # , "Louisiana-East", "Louisiana-West"]
 HTTP_PREFIX = "https://spacenet-dataset.s3.amazonaws.com/"
 
 def load_data():

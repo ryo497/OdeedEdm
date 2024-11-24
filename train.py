@@ -138,10 +138,13 @@ def main(**kwargs):
     elif opts.precond == 've':
         c.network_kwargs.class_name = 'training.networks.VEPrecond'
         c.loss_kwargs.class_name = 'training.loss.VELoss'
-    else:
+    elif opts.precond == 'edm':
         assert opts.precond == 'edm'
         c.network_kwargs.class_name = 'training.networks.EDMPrecond'
         c.loss_kwargs.class_name = 'training.loss.EDMLoss'
+    else:
+        c.network_kwargs.class_name = 'training.networks.SongUnet'
+        c.loss_kwargs.class_name = 'training.loss.OODReconstructionLoss'
 
     # Network options.
     if opts.cbase is not None:
