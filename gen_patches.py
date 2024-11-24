@@ -41,7 +41,7 @@ def extract_patches(image, patch_size=(256, 256), overlap_w=0.5, overlap_h=0.5):
 
     return patches
 
-def process_images(data_path, nation, num_patches_w=3, num_patches_h=3):
+def process_images(data_path, nation, num_patches_w=6, num_patches_h=5):
     """Process images and save patches."""
     labels = {"labels": []}
     output_dir_train = f"{data_path}-{nation}-patches_train"
