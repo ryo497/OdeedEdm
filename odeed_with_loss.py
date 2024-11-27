@@ -23,6 +23,8 @@ from torch_utils import distributed as dist
 import lpips
 from argparse import ArgumentParser
 import pickle
+import os
+import matplotlib.pyplot as plt
 
 # その他設定, 実験由来
 dataset_kwargs = {
@@ -128,7 +130,10 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
         --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
     """
     # dist.init()
-
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
     loss_log = {
         'mse': [],
         'lpips': [],
@@ -180,16 +185,35 @@ def main(network_pkl, datadir, outdir, lpips_net, device=torch.device('cuda'), *
             generated_images = sampler_fn(net, images, **sampler_kwargs)
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
-            print(mse_loss)
-            hoge
+            mse_loss = np.sum(mse_loss)
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
-            loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
-            loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
+            lpips_loss = np.sum(lpips_loss)
+            loss_log['mse'].append(mse_loss)
+            loss_log['lpips'].append(lpips_loss)
+            # loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
+            # loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
             # save loss log
-            os.makedirs(outdir, exist_ok=True)
-            loss_log_path = os.path.join(outdir, 'loss.pkl')
-            with open(loss_log_path, 'wb') as f:
-                pickle.dump(loss_log, f)
+    loss_log['mse'] = sorted(loss_log['mse'])
+    loss_log['lpips'] = sorted(loss_log['lpips'])
+    os.makedirs(outdir, exist_ok=True)
+    loss_log_path = os.path.join(outdir, 'loss.json')
+    with open(loss_log_path, 'wb') as f:
+        json.dump(loss_log, f)
+
+    # Calculate histogram (distribution) of the loss values
+    mse_hist, mse_bins = np.histogram(loss_log['mse'], bins=30, density=True)
+    lpips_hist, lpips_bins = np.histogram(loss_log['lpips'], bins=30, density=True)
+
+    # Plot histogram (distribution)
+    plt.figure(figsize=(10, 6))
+    plt.bar(mse_bins[:-1], mse_hist, width=np.diff(mse_bins), alpha=0.6, label="MSE Distribution")
+    plt.bar(lpips_bins[:-1], lpips_hist, width=np.diff(lpips_bins), alpha=0.6, label="LPIPS Distribution")
+    plt.title("Distribution of Loss Values")
+    plt.xlabel("Loss Values")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.grid()
+    plt.show()
 
             # save imgs and append rec loss
             # images_np = (generated_images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
