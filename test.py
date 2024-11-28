@@ -192,11 +192,9 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
             generated_images = sampler_fn(net, images, **sampler_kwargs)
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
-            mse_loss = np.sum(mse_loss)
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
-            lpips_loss = np.sum(lpips_loss)
-            Preloss_log['mse'].append(mse_loss)
-            Preloss_log['lpips'].append(lpips_loss)
+            Preloss_log['mse'].append([float(m) for m in mse_loss])
+            Preloss_log['lpips'].append([float(l) for l in lpips_loss])
             # loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
             # loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
             # save loss log
@@ -216,14 +214,9 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
             generated_images = sampler_fn(net, images, **sampler_kwargs)
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
-            mse_loss = np.sum(mse_loss)
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
-            lpips_loss = np.sum(lpips_loss)
-            Postloss_log['mse'].append(mse_loss)
-            Postloss_log['lpips'].append(lpips_loss)
-            # loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
-            # loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
-            # save loss log
+            Postloss_log['mse'].append([float(m) for m in mse_loss])
+            Postloss_log['lpips'].append([float(l) for l in lpips_loss])
     Postloss_log['mse'] = sorted(Postloss_log['mse'])
     Postloss_log['lpips'] = sorted(Postloss_log['lpips'])
     os.makedirs(outdir, exist_ok=True)
@@ -303,9 +296,10 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     dist.print0('Done.')
 #----------------------------------------------------------------------------
 """
-python odeed_with_loss.py \
+python test.py \
     --network_pkl checkpoints/network-snapshot-002400.pkl\
-    --datadir datasets/PRE-event-Germany-patches --outdir ODEED \
+    --PreEventdir datasets/PRE-event-Germany-patches_test \
+    --PostEventdir datasets/POST-event-Germany-patches_test --outdir ODEED \
     --lpips_net alex --num_steps 18 --sigma_min 0.002 --sigma_max 80 --rho 7
 """
 
