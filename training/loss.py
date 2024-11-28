@@ -82,7 +82,7 @@ class EDMLoss:
 @persistence.persistent_class
 class OODReconstructionLoss:
     def __init__(self,
-                 t0=2,
+                 t0=10,
                  P_mean=-1.2,
                  P_std=1.2,
                  sigma_data=0.5,
