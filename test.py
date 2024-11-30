@@ -80,6 +80,56 @@ def odeed_sampler(
 
     return x_next
 
+
+def odeed_sampler_with_realistic_net(
+    net,  # The network that outputs denoised samples or score functions.
+    x_init,  # Initial noisy image or latent.
+    num_steps=50,
+    sigma_min=0.01,
+    sigma_max=50,
+    rho=7,
+):
+    """
+    ODEED sampler implementation with realistic network integration and Runge-Kutta method.
+    """
+    # Generate symmetric time steps.
+    step_indices = torch.linspace(0, num_steps - 1, num_steps, dtype=torch.float64)
+    t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+    t_steps_symmetric = torch.cat([t_steps[:-1], t_steps.flip(0)])
+
+    # Initialize state.
+    x_cur = x_init.clone().to(torch.float64)
+    x_history = []
+
+    # Runge-Kutta 4th-order method.
+    def rk4_step(x, t, dt):
+        """
+        Performs a single Runge-Kutta 4th-order step for the PF-ODE.
+        """
+        denoised = net(x, t)  # Use the network's output directly.
+        k1 = (x - denoised) / t**2
+        k2 = (x + 0.5 * dt * k1 - net(x + 0.5 * dt * k1, t + 0.5 * dt)) / t**2
+        k3 = (x + 0.5 * dt * k2 - net(x + 0.5 * dt * k2, t + 0.5 * dt)) / t**2
+        k4 = (x + dt * k3 - net(x + dt * k3, t + dt)) / t**2
+        return x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    # Main loop.
+    for t_cur, t_next in zip(t_steps_symmetric[:-1], t_steps_symmetric[1:]):
+        dt = t_next - t_cur
+
+        # Apply Runge-Kutta step.
+        x_next = rk4_step(x_cur, t_cur, dt)
+
+        # Record state for analysis.
+        x_history.append((float(t_cur), float(x_cur.mean()), float(x_next.mean())))
+
+        # Update state.
+        x_cur = x_next
+
+    # Convert history to array for analysis.
+    x_history = np.array(x_history)
+    return x_cur, x_history
+
 #----------------------------------------------------------------------------
 class Loss:
     def __init__(self, net, device):
@@ -170,7 +220,7 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     #     for f in files:
     #         if f.endswith('png'):
     #             max_size += 1
-    Predataset_obj = dnnlib.util.construct_class_by_name(path=PreEventdirdir, max_size=max_size, **dataset_kwargs) # subclass of training.dataset.Dataset
+    Predataset_obj = dnnlib.util.construct_class_by_name(path=PreEventdir, max_size=max_size, **dataset_kwargs) # subclass of training.dataset.Dataset
     Predataset_iterator = iter(torch.utils.data.DataLoader(dataset=Predataset_obj, shuffle=False, batch_size=batch_size, **data_loader_kwargs))
     Postdataset_obj = dnnlib.util.construct_class_by_name(path=PostEventdir, max_size=max_size, **dataset_kwargs) # subclass of training.dataset.Dataset
     Postdataset_iterator = iter(torch.utils.data.DataLoader(dataset=Postdataset_obj, shuffle=False, batch_size=batch_size, **data_loader_kwargs))
@@ -193,8 +243,8 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
-            Preloss_log['mse'].append([float(m) for m in mse_loss])
-            Preloss_log['lpips'].append([float(l) for l in lpips_loss])
+            Preloss_log['mse'] += [float(m) for m in mse_loss]
+            Preloss_log['lpips'] += [float(l) for l in lpips_loss]
             # loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
             # loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
             # save loss log
@@ -202,7 +252,7 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     Preloss_log['lpips'] = sorted(Preloss_log['lpips'])
     os.makedirs(outdir, exist_ok=True)
     Preloss_log_path = os.path.join(outdir, 'Preloss.json')
-    with open(Preloss_log_path, 'wb') as f:
+    with open(Preloss_log_path, 'w') as f:
         json.dump(Preloss_log, f)
     for batch_idx, (images, labels) in enumerate(Postdataset_iterator):
         with torch.no_grad():
@@ -215,13 +265,13 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
-            Postloss_log['mse'].append([float(m) for m in mse_loss])
-            Postloss_log['lpips'].append([float(l) for l in lpips_loss])
+            Postloss_log['mse'] += [float(m) for m in mse_loss]
+            Postloss_log['lpips'] += [float(l) for l in lpips_loss]
     Postloss_log['mse'] = sorted(Postloss_log['mse'])
     Postloss_log['lpips'] = sorted(Postloss_log['lpips'])
     os.makedirs(outdir, exist_ok=True)
     Postloss_log_path = os.path.join(outdir, 'Postloss.json')
-    with open(Postloss_log_path, 'wb') as f:
+    with open(Postloss_log_path, 'w') as f:
         json.dump(Postloss_log, f)
     # Calculate histogram (distribution) of the loss values
     Premse_hist, Premse_bins = np.histogram(Preloss_log['mse'], bins=30, density=True)
