@@ -9,7 +9,7 @@
 "Elucidating the Design Space of Diffusion-Based Generative Models"."""
 
 import os
-import tqdm
+from tqdm import tqdm
 import json
 import click
 import pickle
@@ -50,35 +50,49 @@ seed = 0
 #----------------------------------------------------------------------------
 def odeed_sampler(
     net, x, class_labels=None, 
-    num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
+    num_steps=18, sigma_min=0.1, sigma_max=10, rho=6,
 ):
-    # Adjust noise levels based on what's supported by the network.
-    sigma_min = max(sigma_min, net.sigma_min)
-    sigma_max = min(sigma_max, net.sigma_max)
+    # print(f"sigma_min: {sigma_min}, sigma_max: {sigma_max}")
 
-    # Time step discretization.
-    step_indices = torch.arange(num_steps, dtype=torch.float64, device=x.device)
+    # Time step discretization (symmetric steps)
+    step_indices = torch.linspace(0, num_steps - 1, num_steps, dtype=torch.float64, device=x.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
-    t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
-    t_steps = torch.cat([reversed(t_steps[1:-1]), t_steps])# t_N, ..., t_1(拡散過程), t_0, t_1, ..., t_N(復元過程)
+    t_steps_symmetric = torch.cat([t_steps[:-1], t_steps.flip(0)])
 
-    # Main sampling loop.
-    #x_next = latents.to(torch.float64) * t_steps[0]
-    x_next = x # ノイズなしの画像を初期値とする
-    for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
+    # Main sampling loop
+    x_next = x  # Initial state
+
+    for i, (t_cur, t_next) in enumerate(zip(t_steps_symmetric[:-1], t_steps_symmetric[1:])):
         x_cur = x_next
-        # PF-ODEの決定論的な実装
-        # Euler step.
+        
+        # Denoising step
         denoised = net(x_cur, t_cur, class_labels).to(torch.float64)
-        d_cur = (x_cur - denoised) / t_cur
+
+        d_cur = (x_cur - denoised) / (t_cur)
         x_next = x_cur + (t_next - t_cur) * d_cur
-        # Apply 2nd order correction.
+
+        # 2nd order correction
         if i < num_steps - 1:
             denoised = net(x_next, t_next, class_labels).to(torch.float64)
-            d_prime = (x_next - denoised) / t_next
+            d_prime = (x_next - denoised) / (t_next)
             x_next = x_cur + (t_next - t_cur) * (0.5 * d_cur + 0.5 * d_prime)
 
-    return x_next
+    # 最後に NaN をチェックしてカウント & マスク
+    nan_mask = torch.isnan(x_next)
+    nan_count = nan_mask.sum().item()  # NaNの要素数をカウント
+
+    if nan_count > 0:
+        # print(f"Detected {nan_count} NaN values in the final result.")
+        x_next[nan_mask] = 0  # マスクしてゼロに置き換え
+    # Adjust losses based on NaN mask
+    if nan_mask.any():
+        # print(f"Adjusting losses for {nan_mask.sum()} NaN-affected samples")
+
+        # Reduce nan_mask to batch size: True if any NaN exists in the batch
+        batch_nan_mask = nan_mask.view(nan_mask.size(0), -1).any(dim=1).cpu().numpy()
+    else:
+        batch_nan_mask = None
+    return x_next, batch_nan_mask
 
 
 def odeed_sampler_with_realistic_net(
@@ -204,8 +218,7 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     # print(os.path.exists(network_pkl))
     # print(os.path.exists("checkpoints/network-snapshot-002400.pkl"))
     with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
-        # net = pickle.load(f)['ema'].to(device)
-        net = pickle.load(f)['ema'].to("cpu")
+        net = pickle.load(f)['ema'].to(device)
 
     # # Other ranks follow.
     # if dist.get_rank() == 0:
@@ -232,19 +245,29 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     # Loop over batches.
     dist.print0(f'Generating test dataset images to "{outdir}"...')
 
-    for batch_idx, (images, labels) in enumerate(Predataset_iterator):
+    for batch_idx, (images, labels) in tqdm(enumerate(Predataset_iterator), total=len(Predataset_iterator), desc="Processing Batches"):
         with torch.no_grad():
             images = images.to(device).to(torch.float32) / 127.5 - 1
             labels = labels.to(device)
             # Generate Images
             sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
             sampler_fn = odeed_sampler
-            generated_images = sampler_fn(net, images, **sampler_kwargs)
+            generated_images, nan_mask = sampler_fn(net, images, **sampler_kwargs)
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
+            if nan_mask is not None:
+                print(f"Adjusting losses for {nan_mask.sum()} NaN-affected samples")
+                # Set NaN-affected parts to a specific value (e.g., max loss)
+                max_mse_loss = 1.2  # Define maximum MSE loss for NaN samples
+                max_lpips_loss = 20  # Define maximum LPIPS loss for NaN samples
+                mse_loss[nan_mask] = max_mse_loss
+                lpips_loss[nan_mask] = max_lpips_loss
+            print(mse_loss)
+            print(lpips_loss)
             Preloss_log['mse'] += [float(m) for m in mse_loss]
             Preloss_log['lpips'] += [float(l) for l in lpips_loss]
+
             # loss_log['mse'] = np.concatenate((loss_log['mse'], mse_loss))
             # loss_log['lpips'] = np.concatenate((loss_log['lpips'], lpips_loss))
             # save loss log
@@ -254,17 +277,24 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
     Preloss_log_path = os.path.join(outdir, 'Preloss.json')
     with open(Preloss_log_path, 'w') as f:
         json.dump(Preloss_log, f)
-    for batch_idx, (images, labels) in enumerate(Postdataset_iterator):
+    for batch_idx, (images, labels) in tqdm(enumerate(Postdataset_iterator), total=len(Postdataset_iterator), desc="Processing Batches"):
         with torch.no_grad():
             images = images.to(device).to(torch.float32) / 127.5 - 1
             labels = labels.to(device)
             # Generate Images
             sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
             sampler_fn = odeed_sampler
-            generated_images = sampler_fn(net, images, **sampler_kwargs)
+            generated_images, nan_mask = sampler_fn(net, images, **sampler_kwargs)
             # calc reconstruction loss
             mse_loss = loss.calc_loss(images, generated_images, 'mse').cpu().detach().numpy()
             lpips_loss = loss.calc_loss(images, generated_images, 'lpips').cpu().detach().numpy()
+            if nan_mask is not None:
+                print(f"Adjusting losses for {nan_mask.sum()} NaN-affected samples")
+                # Set NaN-affected parts to a specific value (e.g., max loss)
+                max_mse_loss = 1.2  # Define maximum MSE loss for NaN samples
+                max_lpips_loss = 15  # Define maximum LPIPS loss for NaN samples
+                mse_loss[nan_mask] = max_mse_loss
+                lpips_loss[nan_mask] = max_lpips_loss
             Postloss_log['mse'] += [float(m) for m in mse_loss]
             Postloss_log['lpips'] += [float(l) for l in lpips_loss]
     Postloss_log['mse'] = sorted(Postloss_log['mse'])
