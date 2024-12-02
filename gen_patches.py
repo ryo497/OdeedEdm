@@ -41,16 +41,14 @@ def extract_patches(image, patch_size=(256, 256), overlap_w=0.5, overlap_h=0.5):
 
     return patches
 
-def process_images(data_path, nation, num_patches_w=6, num_patches_h=5):
+def gen_patches(data_path, nation, mode, num_patches_w=6, num_patches_h=5):
     """Process images and save patches."""
     labels = {"labels": []}
-    output_dir_train = f"{data_path}-{nation}-patches_train"
-    output_dir_test = f"{data_path}-{nation}-patches_test"
-    os.makedirs(output_dir_train, exist_ok=True)
-    os.makedirs(output_dir_test, exist_ok=True)
+    output_dir = f"{data_path}-{nation}-patches_{mode}"
+    os.makedirs(output_dir, exist_ok=True)
     img_names = os.listdir(data_path)
     random.shuffle(img_names)
-    threshold = int(0.9 * len(img_names))
+    # threshold = int(0.9 * len(img_names))
     for i, img_name in tqdm(enumerate(img_names)):
         if not img_name.endswith(".tif"):
             continue
@@ -60,10 +58,10 @@ def process_images(data_path, nation, num_patches_w=6, num_patches_h=5):
         overlap_w = calculate_overlap(downsampled_image.size[0], patch_size=256, num_patches=num_patches_w)
         overlap_h = calculate_overlap(downsampled_image.size[1], patch_size=256, num_patches=num_patches_h)
         patches = extract_patches(downsampled_image, patch_size=(256, 256), overlap_w=overlap_w, overlap_h=overlap_h)  # Extract patches
-        if i < threshold:
-            output_dir = output_dir_train
-        else:
-            output_dir = output_dir_test
+        # if i < threshold:
+        #     output_dir = output_dir_train
+        # else:
+        #     output_dir = output_dir_test
         for i, patch in enumerate(patches):
             patch_img = Image.fromarray(patch)
             patch_filename = f"{img_name.split('.')[0]}_{i}.png"
@@ -73,21 +71,12 @@ def process_images(data_path, nation, num_patches_w=6, num_patches_h=5):
     with open(os.path.join(output_dir, "dataset.json"), "w") as f:
         json.dump(labels, f)
 
-
-
-def gen_patches(data_path, nation):
-    args = ArgumentParser()
-    args.add_argument("--data_path", type=str, default=data_path)
-    args.add_argument("--nation", type=str, default=nation)
-    # Process the images to extract patches
-    process_images(data_path, nation)
- 
-
 # Germany 881 imgを 5864 9倍でいいかも
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--data_path", type=str, default="data/raw_data")
     args.add_argument("--nation", type=str, default="Germany")
+    args.add_argument("--mode", type=str, default="train")
     args = args.parse_args()
-    gen_patches(args.data_path, args.nation)
+    gen_patches(args.data_path, args.nation, args.mode)
