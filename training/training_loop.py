@@ -123,6 +123,7 @@ def training_loop(
     if not os.path.exists(log_file):
         with open(log_file, 'w') as f:
             pass  # 空ファイルを作成
+    progress_bar = dnnlib.ProgressBar(total_kimg * 1000)
     while True:
         # Accumulate gradients.
         optimizer.zero_grad(set_to_none=True)
@@ -135,8 +136,8 @@ def training_loop(
             loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
             training_stats.report('Loss/loss', loss)
             # 勾配の累積
-            loss.sum().mul(loss_scaling / batch_total).backward() 
-
+            loss.sum().mul(loss_scaling / batch_total).backward()
+        progress_bar.update(batch_total)
         # Update weights.
         for g in optimizer.param_groups:
             g['lr'] = optimizer_kwargs['lr'] * min(cur_nimg / max(lr_rampup_kimg * 1000, 1e-8), 1)

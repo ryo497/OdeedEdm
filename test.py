@@ -263,8 +263,6 @@ def main(network_pkl, PreEventdir, PostEventdir, outdir, lpips_net, device=torch
                 max_lpips_loss = 20  # Define maximum LPIPS loss for NaN samples
                 mse_loss[nan_mask] = max_mse_loss
                 lpips_loss[nan_mask] = max_lpips_loss
-            print(mse_loss)
-            print(lpips_loss)
             Preloss_log['mse'] += [float(m) for m in mse_loss]
             Preloss_log['lpips'] += [float(l) for l in lpips_loss]
 
