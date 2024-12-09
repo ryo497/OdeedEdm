@@ -49,7 +49,7 @@ seed = 0
 
 #----------------------------------------------------------------------------
 def odeed_sampler(
-    net, x, class_labels=None, 
+    net, x, class_labels=None,
     num_steps=18, sigma_min=0.1, sigma_max=10, rho=6,
 ):
     # print(f"sigma_min: {sigma_min}, sigma_max: {sigma_max}")

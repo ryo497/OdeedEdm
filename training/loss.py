@@ -87,7 +87,7 @@ class OODReconstructionLoss:
                  P_std=1.2,
                  sigma_data=0.5,
                  weighting_function="training",
-                 num_samples=10,
+                 num_samples=4,
                  device="cuda"):
         """
         OOD再構成誤差を計算するクラス
@@ -125,26 +125,39 @@ class OODReconstructionLoss:
         :param x0: 入力画像テンソル (バッチサイズ, チャネル, 高さ, 幅)
         :return: OOD損失
         """
-        batch_size = images.size(0)
+        batch_size, C, H, W = images.size
         # 時間 t ~ U(0, t0) をサンプリング
-        t = torch.rand(batch_size, device=self.device) * self.t0
-        weights = self.lambda_t(t)
+        t = torch.rand(batch_size, self.num_samples, device=self.device) * self.t0  # t ~ U(0, t0)
+        t = t.view(batch_size, self.num_samples, 1, 1, 1)  # tの形を拡張
+        # t = torch.rand(batch_size, device=self.device) * self.t0
+        # weights = self.lambda_t(t)
         y, augment_labels = augment_pipe(images) if augment_pipe is not None else (images, None)
+        y = y.unsqueeze(1).repeat(1, self.num_samples, 1, 1, 1)
         # ノイズ epsilon ~ N(0, t0^2 * I) をサンプリング
-        epsilon = torch.randn_like(y) * t.view(-1, 1, 1, 1)
+        epsilon = torch.randn_like(y) * t
 
         # ノイズ付き入力 x_t
         x_t = y + epsilon
-
-        # 再構成画像をモデルで計算
+        x_t = x_t.view(batch_size * self.num_samples, C, H, W)
+        t = t.view(batch_size * self.num_samples, 1, 1, 1)
         x_reconstructed = net(x_t, t)
 
+        x_reconstructed = x_reconstructed.view(batch_size, self.num_samples, C, H, W)
+
+        loss = ((x_reconstructed - y) ** 2).view(batch_size, self.num_samples, -1).mean(dim=2)
+        loss = loss.mean(dim=1)
+        
         # 再構成誤差 || Dθ(x0 + ϵ) - x0 ||^2
         reconstruction_error = ((x_reconstructed - y) ** 2).view(batch_size, -1).mean(dim=1)
+        weights = self.lambda_t(t.view(batch_size, self.num_samples))  # (B, N)
 
-        # 重み付き損失を加算
-        reconstruction_loss = weights * reconstruction_error
+        # 9. 重み付き再構成誤差の計算 (B, N)
+        weighted_reconstruction_loss = weights * reconstruction_error  # (B, N)
+        
+        # 10. すべてのtの損失をバッチごとに平均 (B)
+        batch_loss = weighted_reconstruction_loss.mean(dim=1)
         # 平均化
-        return reconstruction_loss
+        total_loss = batch_loss.mean()  # スカラー (1,)
+        return total_loss
 
 #----------------------------------------------------------------------------

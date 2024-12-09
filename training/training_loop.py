@@ -16,6 +16,7 @@ import psutil
 import numpy as np
 import torch
 import dnnlib
+from tqdm import tqdm
 from torch_utils import distributed as dist
 from torch_utils import training_stats
 from torch_utils import misc
@@ -123,7 +124,7 @@ def training_loop(
     if not os.path.exists(log_file):
         with open(log_file, 'w') as f:
             pass  # 空ファイルを作成
-    progress_bar = dnnlib.ProgressBar(total_kimg * 1000)
+    progress_bar = tqdm(total=total_kimg * 1000, desc="Training Progress")
     while True:
         # Accumulate gradients.
         optimizer.zero_grad(set_to_none=True)
@@ -137,7 +138,7 @@ def training_loop(
             training_stats.report('Loss/loss', loss)
             # 勾配の累積
             loss.sum().mul(loss_scaling / batch_total).backward()
-        progress_bar.update(batch_total)
+
         # Update weights.
         for g in optimizer.param_groups:
             g['lr'] = optimizer_kwargs['lr'] * min(cur_nimg / max(lr_rampup_kimg * 1000, 1e-8), 1)
@@ -156,6 +157,11 @@ def training_loop(
 
         # Perform maintenance tasks once per tick.
         cur_nimg += batch_size
+        # Loss 値を進捗バーに表示
+        if cur_nimg % batch_size * 10 == 0:
+          progress_bar.set_postfix({"Loss": loss.sum().mul(loss_scaling / batch_total).item()})
+        # 進捗バーを更新
+        progress_bar.update(batch_size)
         # print(total_kimg)
         done = (cur_nimg >= total_kimg * 1000)
         # ログデータの作成
@@ -234,5 +240,3 @@ def training_loop(
     # Done.
     dist.print0()
     dist.print0('Exiting...')
-
-#----------------------------------------------------------------------------
