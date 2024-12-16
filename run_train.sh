@@ -1,0 +1,13 @@
+python train.py \
+--outdir=result/ \
+--data=datasets/PRE-event-Germany-patches_train \
+--cond 0 \
+--snap 1 \
+--fp16 1 \
+--precond OOD \
+--arch=ddpmpp \
+--duration=3.2 \
+--batch=3 \
+--lr=4e-5 \
+--cbase=64 \
+--cres=1,2,2,4,4

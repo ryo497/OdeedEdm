@@ -7,3 +7,5 @@
 /result/
 *.png
 checkpoints/
+*.pyc
+.env/
