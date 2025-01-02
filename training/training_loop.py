@@ -214,6 +214,11 @@ def training_loop(
             if dist.get_rank() == 0:
                 with open(os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl'), 'wb') as f:
                     pickle.dump(data, f)
+            if os.path.exists('/content/drive/MyDrive/OdeedEdm/result'):
+                # 日付を取得
+                date = time.strftime('%Y%m%d', time.localtime())
+                with open(f'/content/drive/MyDrive/OdeedEdm/result/network-snapshot-{cur_nimg//1000:06d}_{date}.pkl', 'wb') as f:
+                    pickle.dump(data, f)
             del data # conserve memory
 
         # Save full dump of the training state.
